@@ -57,7 +57,7 @@ async function publishVideoDirectFile(accessToken, filePath, caption) {
   const initPayload = {
     post_info: {
       title: caption.substring(0, 150),
-      privacy_level: 'PUBLIC_TO_EVERYONE',
+      privacy_level: 'SELF_ONLY',
       disable_duet: false,
       disable_comment: false,
       disable_stitch: false,
@@ -92,7 +92,7 @@ async function publishVideoDirectFile(accessToken, filePath, caption) {
   console.log(`✅ Upload initialized. Publish ID: ${publishId}`);
 
   // Step 2: Push binary buffer
-  console.log('⬆️ Step 2: Uploading video binary directly to TikTok...');
+  console.log('⬆️️ Step 2: Uploading video binary directly to TikTok...');
   const fileStream = fs.createReadStream(filePath);
   await axios.put(uploadUrl, fileStream, {
     headers: {
