@@ -1,44 +1,43 @@
+const { chromium } = require('playwright');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const CONFIG = {
-  accessToken: 'act.LJHk3myqd007l4YFZ8tZo5lp7xoibBPIp1yFeh9CT3WvCQMsqhr5HTWpguLa!4697.e1',
+  sessionid: process.env.TIKTOK_SESSION_ID,
   csvUrl: process.env.SHEET_CSV_URL
 };
 
 async function fetchVideoTarget() {
   if (!CONFIG.csvUrl) {
-    console.log('⚠️ SHEET_CSV_URL missing, using test Cloudinary video.');
+    console.log('⚠️ SHEET_CSV_URL missing, using default test video.');
     return {
       videoUrl: 'https://res.cloudinary.com/demo/video/upload/dog.mp4',
-      caption: 'Effortlessly stunning. #trending #reels #viral'
+      caption: 'Effortlessly stunning. #trending #viral #fyp'
     };
   }
 
-  console.log('🔍 Fetching target video from Google Sheet CSV...');
+  console.log('🔍 Fetching target video from CSV...');
   const res = await axios.get(CONFIG.csvUrl);
   const records = parse(res.data, { columns: true, skip_empty_lines: true });
-
   const target = records.find(r => !r.posted || r.posted.toLowerCase() !== 'true');
-  if (!target) throw new Error('No unposted videos found in CSV sheet!');
+  if (!target) throw new Error('No unposted rows found in CSV sheet!');
 
   return {
     videoUrl: target.video_url || target.cloudinary_url,
-    caption: target.caption || 'Effortlessly stunning. #trending #reels #viral'
+    caption: target.caption || 'Effortlessly stunning. #trending #viral #fyp'
   };
 }
 
-async function downloadVideo(videoUrl, destPath) {
-  console.log(`⬇️ Downloading video binary to runner: ${videoUrl}`);
+async function downloadVideo(url, outputPath) {
+  console.log(`⬇️ Downloading video: ${url}`);
   const response = await axios({
     method: 'GET',
-    url: videoUrl,
+    url,
     responseType: 'stream'
   });
-
-  const writer = fs.createWriteStream(destPath);
+  const writer = fs.createWriteStream(outputPath);
   response.data.pipe(writer);
 
   return new Promise((resolve, reject) => {
@@ -47,85 +46,114 @@ async function downloadVideo(videoUrl, destPath) {
   });
 }
 
-async function publishVideoDirectFile(accessToken, filePath, caption) {
-  const stats = fs.statSync(filePath);
-  const videoSize = stats.size;
-  console.log(`📦 Video size: ${videoSize} bytes`);
+async function run() {
+  const tempVideo = path.join(__dirname, 'upload_temp.mp4');
 
-  // Step 1: Initialize upload
-  console.log('🚀 Step 1: Initializing direct video upload...');
-  const initPayload = {
-    post_info: {
-      title: caption.substring(0, 150),
-      privacy_level: 'SELF_ONLY',
-      disable_duet: false,
-      disable_comment: false,
-      disable_stitch: false,
-      video_cover_timestamp_ms: 1000
-    },
-    source_info: {
-      source: 'FILE_UPLOAD',
-      video_size: videoSize,
-      chunk_size: videoSize,
-      total_chunk_count: 1
-    }
-  };
-
-  const initRes = await axios.post(
-    'https://open.tiktokapis.com/v2/post/publish/video/init/',
-    initPayload,
-    {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json; charset=UTF-8'
-      }
-    }
-  );
-
-  const initData = initRes.data;
-  if (initData.error && initData.error.code !== 'ok') {
-    throw new Error(`Init failed: ${JSON.stringify(initData)}`);
-  }
-
-  const uploadUrl = initData.data.upload_url;
-  const publishId = initData.data.publish_id;
-  console.log(`✅ Upload initialized. Publish ID: ${publishId}`);
-
-  // Step 2: Push binary buffer
-  console.log('⬆️️ Step 2: Uploading video binary directly to TikTok...');
-  const fileStream = fs.createReadStream(filePath);
-  await axios.put(uploadUrl, fileStream, {
-    headers: {
-      'Content-Type': 'video/mp4',
-      'Content-Range': `bytes 0-\({videoSize - 1}/\){videoSize}`,
-      'Content-Length': videoSize
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-infobars',
+      '--window-size=1920,1080'
+    ]
   });
 
-  console.log('🎉 Video uploaded and published successfully!');
-  console.log(`📌 Final Publish ID: ${publishId}`);
-}
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+    viewport: { width: 1920, height: 1080 },
+    locale: 'en-US'
+  });
 
-async function run() {
-  const tempFile = path.join(__dirname, 'temp_upload.mp4');
+  const page = await context.newPage();
+
   try {
     const { videoUrl, caption } = await fetchVideoTarget();
-    await downloadVideo(videoUrl, tempFile);
-    await publishVideoDirectFile(CONFIG.accessToken, tempFile, caption);
-    console.log('🏁 Workflow Completed Successfully!');
-  } catch (err) {
-    console.error('❌ Error executing TikTok workflow:');
-    if (err.response?.data) {
-      console.error(JSON.stringify(err.response.data, null, 2));
-    } else {
-      console.error(err.message);
+    await downloadVideo(videoUrl, tempVideo);
+
+    console.log('🍪 Injecting session cookies...');
+    if (CONFIG.sessionid) {
+      await context.addCookies([
+        {
+          name: 'sessionid',
+          value: CONFIG.sessionid,
+          domain: '.tiktok.com',
+          path: '/',
+          httpOnly: true,
+          secure: true
+        }
+      ]);
     }
-    process.exit(1);
+
+    console.log('🌐 Opening TikTok Creator Upload Studio...');
+    await page.goto('https://www.tiktok.com/creator-center/upload?from=upload', {
+      waitUntil: 'networkidle',
+      timeout: 60000
+    });
+
+    console.log('📸 Capturing initial page snapshot...');
+    await page.screenshot({ path: 'step1_loaded.png', fullPage: true });
+
+    // Handle Upload File Input
+    console.log('📁 Locating file upload input element...');
+    let fileInput = await page.$('input[type="file"]');
+    
+    // Check inside iframe if not in main document
+    if (!fileInput) {
+      for (const frame of page.frames()) {
+        fileInput = await frame.$('input[type="file"]');
+        if (fileInput) break;
+      }
+    }
+
+    if (!fileInput) {
+      await page.screenshot({ path: 'error_no_file_input.png', fullPage: true });
+      throw new Error('File input not found. Snapshot saved to error_no_file_input.png');
+    }
+
+    console.log('⬆️ Setting file into input element...');
+    await fileInput.setInputFiles(tempVideo);
+
+    console.log('⏳ Waiting for upload processing...');
+    await page.waitForTimeout(10000);
+    await page.screenshot({ path: 'step2_uploaded.png', fullPage: true });
+
+    // Handle Caption Input
+    console.log('📝 Setting caption...');
+    const captionSelector = 'div[contenteditable="true"], .notranslate.public-DraftEditor-content, textarea';
+    const captionEl = await page.$(captionSelector);
+    if (captionEl) {
+      await captionEl.click();
+      await page.keyboard.press('Control+A');
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type(caption, { delay: 40 });
+    }
+
+    await page.waitForTimeout(4000);
+    await page.screenshot({ path: 'step3_caption.png', fullPage: true });
+
+    // Click Post Button
+    console.log('🚀 Searching for Post button...');
+    const postButton = await page.$('button:has-text("Post"), div[role="button"]:has-text("Post")');
+    if (postButton) {
+      await postButton.click();
+      console.log('✅ Clicked Post button!');
+      await page.waitForTimeout(8000);
+      await page.screenshot({ path: 'step4_final.png', fullPage: true });
+    } else {
+      console.log('⚠️️ Post button selector missed.');
+      await page.screenshot({ path: 'error_post_button.png', fullPage: true });
+    }
+
+  } catch (err) {
+    console.error('❌ Automation Error:', err.message);
+    await page.screenshot({ path: 'error_failure.png', fullPage: true }).catch(() => {});
+    process.exitCode = 1;
   } finally {
-    if (fs.existsSync(tempFile)) {
-      fs.unlinkSync(tempFile);
+    await browser.close();
+    if (fs.existsSync(tempVideo)) {
+      fs.unlinkSync(tempVideo);
     }
   }
 }
