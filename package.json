@@ -1,13 +1,14 @@
 {
   "name": "tiktok-auto-distributor",
   "version": "1.0.0",
-  "description": "Direct TikTok Content Posting API uploader",
+  "description": "Playwright TikTok Automated Uploader",
   "main": "tiktok_uploader.js",
   "scripts": {
     "start": "node tiktok_uploader.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
-    "csv-parse": "^5.5.6"
+    "csv-parse": "^5.5.6",
+    "playwright": "^1.49.0"
   }
 }
