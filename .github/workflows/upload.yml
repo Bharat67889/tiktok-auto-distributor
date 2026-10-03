@@ -2,8 +2,6 @@ name: TikTok Auto Distributor
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */6 * * *'
 
 jobs:
   distribute:
@@ -20,7 +18,18 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Run TikTok API Distributor
+      - name: Install Playwright Browsers & Deps
+        run: npx playwright install --with-deps chromium
+
+      - name: Run TikTok Playwright Uploader
         run: node tiktok_uploader.js
         env:
+          TIKTOK_SESSION_ID: ${{ secrets.TIKTOK_SESSION_ID }}
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+
+      - name: Upload Debug Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tiktok-screenshots
+          path: "*.png"
