@@ -1,138 +1,118 @@
-const { chromium } = require('playwright');
-const fs = require('fs');
-const https = require('https');
+const axios = require('axios');
+const { parse } = require('csv-parse/sync');
 
-// =====================================================================
-// ⚙️ CONFIGURATION
-// =====================================================================
-const CLOUD_NAME = "djlipqlut";
-const BANNER_WIDTH = 380;
-const BANNER_GRAVITY = "north_west";
-const BANNER_MARGIN_X = 10;
-const BANNER_MARGIN_Y = 40;
-const FB_PAGE1_STICKER = "fbsticker_a";
+// Configuration
+const CONFIG = {
+  clientKey: 'sbawfr1212ig8iqpw0',
+  clientSecret: 'Q0wiyjiMbskrSOvmWTb12LHqMCpoZBG3',
+  redirectUri: 'https://bharat67889.github.io/vault-/',
+  authCode: '16Ur-Vpym2NGChly3KTYbF8ox-AyWdiEPdBBuhkCn3WvivZk1fmrj7aHFnmJQLSYcuVc4FD5yHGdnTYa6YQ9St1tU2v7reBbpyDTHubzw5uEcbph02tKz_XcohG2-ykDFTpRAQqGG8rQKTvSaZbydZjrnh3UtH2FSdkUGZjz564wxCRf8w6Dsyb_yRoMxaf7wkr3i4EJ-zjyWwpYJaOw8Fz7BlP__FekRNDnsw*v!4741.e1',
+  csvUrl: process.env.SHEET_CSV_URL
+};
 
-const PIN_QUEUE_CSV = "https://docs.google.com/spreadsheets/d/1MrwItyy6IPNLSJbz1b53TGOTS2JBLTyg46Ql9xZpI6w/gviz/tq?tqx=out:csv&sheet=PinterestQueue";
-
-function downloadFile(url, dest) {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    https.get(url, (response) => {
-      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        return downloadFile(response.headers.location, dest).then(resolve).catch(reject);
-      }
-      response.pipe(file);
-      file.on('finish', () => {
-        file.close(resolve);
-      });
-    }).on('error', (err) => {
-      fs.unlink(dest, () => reject(err));
-    });
+async function getAccessToken() {
+  console.log('🔑 Exchanging authorization code for Access Token...');
+  const params = new URLSearchParams({
+    client_key: CONFIG.clientKey,
+    client_secret: CONFIG.clientSecret,
+    code: CONFIG.authCode,
+    grant_type: 'authorization_code',
+    redirect_uri: CONFIG.redirectUri
   });
-}
 
-function parseCSVLine(text) {
-  let p = '', row = [''], i = 0, q = false;
-  for (let c of text) {
-    if (c === '"') {
-      if (q && p === '"') row[i] += '"';
-      q = !q;
-    } else if (c === ',' && !q) {
-      row[++i] = '';
-    } else if (c === '\n' && !q) {
-      break;
-    } else {
-      row[i] += c;
+  const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', params.toString(), {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cache-Control': 'no-cache'
     }
-    p = c;
+  });
+
+  const data = response.data;
+  if (data.error || !data.data?.access_token) {
+    throw new Error(`Token Exchange Failed: ${JSON.stringify(data)}`);
   }
-  return row;
+
+  console.log('✅ Access Token acquired successfully!');
+  return data.data.access_token;
 }
 
-async function getLatestVideoData() {
-  const res = await fetch(PIN_QUEUE_CSV);
-  const text = await res.text();
-  const lines = text.split('\n').filter(l => l.trim().length > 0);
-  if (lines.length <= 1) throw new Error("Sheet CSV is empty!");
+async function fetchVideoTarget() {
+  if (!CONFIG.csvUrl) {
+    console.log('⚠️ SHEET_CSV_URL secret missing, using default direct video URL.');
+    return {
+      videoUrl: 'https://res.cloudinary.com/demo/video/upload/dog.mp4',
+      caption: 'Automated post via TikTok API #trending #viral'
+    };
+  }
 
-  const cols = parseCSVLine(lines[lines.length - 1]);
-  const rawVideoUrl = (cols[0] || '').replace(/^"|"$/g, '').trim();
-  const rawCaption = (cols[1] || '').replace(/^"|"$/g, '').trim();
+  console.log('🔍 Fetching target video from Google Sheet CSV...');
+  const res = await axios.get(CONFIG.csvUrl);
+  const records = parse(res.data, { columns: true, skip_empty_lines: true });
 
-  const match = rawVideoUrl.match(/\/([^\/\?]+)\.mp4/);
-  const publicId = match ? match[1] : null;
-  if (!publicId) throw new Error("Could not extract Public ID from: " + rawVideoUrl);
+  const target = records.find(r => !r.posted || r.posted.toLowerCase() !== 'true');
+  if (!target) throw new Error('No unposted videos found in CSV sheet!');
 
-  const processedUrl = `https://res.cloudinary.com/\({CLOUD_NAME}/video/upload/l_\){FB_PAGE1_STICKER},w_\({BANNER_WIDTH},g_\){BANNER_GRAVITY},x_\({BANNER_MARGIN_X},y_\){BANNER_MARGIN_Y}/${publicId}.mp4`;
-  
-  let caption = rawCaption.replace(/visit\s*site/gi, '').trim();
-  if (!caption) caption = "Check out this reel! #shorts #viral";
-
-  return { processedUrl, caption };
+  return {
+    videoUrl: target.video_url || target.cloudinary_url,
+    caption: target.caption || 'Effortlessly stunning. #trending #reels #viral'
+  };
 }
 
-(async () => {
+async function publishVideo(accessToken, videoUrl, caption) {
+  console.log('🚀 Sending direct video publish request to TikTok Content Posting API...');
+  console.log(`🎯 Video Source: ${videoUrl}`);
+  console.log(`📝 Caption: ${caption}`);
+
+  const payload = {
+    post_info: {
+      title: caption.substring(0, 150),
+      privacy_level: 'PUBLIC_TO_EVERYONE',
+      disable_duet: false,
+      disable_comment: false,
+      disable_stitch: false,
+      video_cover_timestamp_ms: 1000
+    },
+    source_info: {
+      source: 'PULL_FROM_URL',
+      video_url: videoUrl
+    }
+  };
+
+  const res = await axios.post(
+    'https://open.tiktokapis.com/v2/post/publish/video/init/',
+    payload,
+    {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json; charset=UTF-8'
+      }
+    }
+  );
+
+  const resData = res.data;
+  if (resData.error && resData.error.code !== 'ok') {
+    throw new Error(`Publish failed: ${JSON.stringify(resData)}`);
+  }
+
+  console.log('🎉 Publish initiated successfully!');
+  console.log(`📌 Publish ID: ${resData.data?.publish_id}`);
+}
+
+async function run() {
   try {
-    console.log("🔍 Fetching target video from Google Sheet CSV...");
-    const { processedUrl, caption } = await getLatestVideoData();
-    console.log("🎯 Video Target:", processedUrl);
-    console.log("📝 Caption:", caption);
-
-    console.log("📥 Downloading video locally for upload...");
-    const localVideoPath = "./video_upload.mp4";
-    await downloadFile(processedUrl, localVideoPath);
-    console.log("✅ Video downloaded!");
-
-    // Parse Cookies from GitHub Secret
-    const rawCookies = process.env.TIKTOK_COOKIES;
-    if (!rawCookies) throw new Error("TIKTOK_COOKIES secret missing!");
-    const cookies = JSON.parse(rawCookies);
-
-    console.log("🌐 Launching Playwright browser...");
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    });
-
-    await context.addCookies(cookies);
-    const page = await context.newPage();
-
-    console.log("🚀 Navigating to TikTok Studio Upload...");
-    await page.goto('https://www.tiktok.com/tiktokstudio/upload?from=webapp&lang=en&tab=video', {
-      waitUntil: 'networkidle',
-      timeout: 60000
-    });
-
-    // Upload via file input
-    console.log("📤 Attaching video file to uploader...");
-    const fileInput = await page.waitForSelector('input[type="file"]', { timeout: 30000 });
-    await fileInput.setInputFiles(localVideoPath);
-
-    console.log("⏳ Waiting for video preview and upload processing...");
-    await page.waitForTimeout(10000);
-
-    // Caption fill
-    console.log("✍️ Setting caption...");
-    const captionEditor = await page.waitForSelector('[contenteditable="true"]', { timeout: 30000 });
-    await captionEditor.click();
-    await page.keyboard.press('Control+A');
-    await page.keyboard.press('Backspace');
-    await captionEditor.type(caption, { delay: 50 });
-
-    console.log("⏳ Waiting 10s before clicking post...");
-    await page.waitForTimeout(10000);
-
-    // Click Post Button
-    console.log("🚀 Clicking Post button...");
-    const postBtn = await page.waitForSelector('button:has-text("Post")', { timeout: 20000 });
-    await postBtn.click();
-
-    await page.waitForTimeout(15000);
-    console.log("🎉 Successfully triggered Post on TikTok!");
-
-    await browser.close();
+    const accessToken = await getAccessToken();
+    const { videoUrl, caption } = await fetchVideoTarget();
+    await publishVideo(accessToken, videoUrl, caption);
+    console.log('🏁 Workflow Completed Successfully!');
   } catch (err) {
-    console.error("❌ Upload Runner Error:", err);
+    console.error('❌ Error executing TikTok workflow:');
+    if (err.response?.data) {
+      console.error(JSON.stringify(err.response.data, null, 2));
+    } else {
+      console.error(err.message);
+    }
     process.exit(1);
   }
-})();
+}
+
+run();
