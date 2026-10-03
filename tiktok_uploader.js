@@ -1,4 +1,6 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const CONFIG = {
@@ -28,12 +30,31 @@ async function fetchVideoTarget() {
   };
 }
 
-async function publishVideo(accessToken, videoUrl, caption) {
-  console.log('🚀 Sending publish request to TikTok Content Posting API...');
-  console.log(`🎯 Video Source: ${videoUrl}`);
-  console.log(`📝 Caption: ${caption}`);
+async function downloadVideo(videoUrl, destPath) {
+  console.log(`⬇️ Downloading video binary to runner: ${videoUrl}`);
+  const response = await axios({
+    method: 'GET',
+    url: videoUrl,
+    responseType: 'stream'
+  });
 
-  const payload = {
+  const writer = fs.createWriteStream(destPath);
+  response.data.pipe(writer);
+
+  return new Promise((resolve, reject) => {
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+}
+
+async function publishVideoDirectFile(accessToken, filePath, caption) {
+  const stats = fs.statSync(filePath);
+  const videoSize = stats.size;
+  console.log(`📦 Video size: ${videoSize} bytes`);
+
+  // Step 1: Initialize upload
+  console.log('🚀 Step 1: Initializing direct video upload...');
+  const initPayload = {
     post_info: {
       title: caption.substring(0, 150),
       privacy_level: 'PUBLIC_TO_EVERYONE',
@@ -43,14 +64,16 @@ async function publishVideo(accessToken, videoUrl, caption) {
       video_cover_timestamp_ms: 1000
     },
     source_info: {
-      source: 'PULL_FROM_URL',
-      video_url: videoUrl
+      source: 'FILE_UPLOAD',
+      video_size: videoSize,
+      chunk_size: videoSize,
+      total_chunk_count: 1
     }
   };
 
-  const res = await axios.post(
+  const initRes = await axios.post(
     'https://open.tiktokapis.com/v2/post/publish/video/init/',
-    payload,
+    initPayload,
     {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -59,22 +82,39 @@ async function publishVideo(accessToken, videoUrl, caption) {
     }
   );
 
-  const resData = res.data;
-  console.log('API Response:', JSON.stringify(resData, null, 2));
-
-  if (resData.error && resData.error.code !== 'ok') {
-    throw new Error(`Publish failed: ${JSON.stringify(resData)}`);
+  const initData = initRes.data;
+  if (initData.error && initData.error.code !== 'ok') {
+    throw new Error(`Init failed: ${JSON.stringify(initData)}`);
   }
 
-  console.log('🎉 Publish initiated successfully!');
-  console.log(`📌 Publish ID: ${resData.data?.publish_id}`);
+  const uploadUrl = initData.data.upload_url;
+  const publishId = initData.data.publish_id;
+  console.log(`✅ Upload initialized. Publish ID: ${publishId}`);
+
+  // Step 2: Push binary buffer
+  console.log('⬆️ Step 2: Uploading video binary directly to TikTok...');
+  const fileStream = fs.createReadStream(filePath);
+  await axios.put(uploadUrl, fileStream, {
+    headers: {
+      'Content-Type': 'video/mp4',
+      'Content-Range': `bytes 0-\({videoSize - 1}/\){videoSize}`,
+      'Content-Length': videoSize
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity
+  });
+
+  console.log('🎉 Video uploaded and published successfully!');
+  console.log(`📌 Final Publish ID: ${publishId}`);
 }
 
 async function run() {
+  const tempFile = path.join(__dirname, 'temp_upload.mp4');
   try {
     const { videoUrl, caption } = await fetchVideoTarget();
-    await publishVideo(CONFIG.accessToken, videoUrl, caption);
-    console.log('🏁 Video Published Successfully!');
+    await downloadVideo(videoUrl, tempFile);
+    await publishVideoDirectFile(CONFIG.accessToken, tempFile, caption);
+    console.log('🏁 Workflow Completed Successfully!');
   } catch (err) {
     console.error('❌ Error executing TikTok workflow:');
     if (err.response?.data) {
@@ -83,6 +123,10 @@ async function run() {
       console.error(err.message);
     }
     process.exit(1);
+  } finally {
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
   }
 }
 
