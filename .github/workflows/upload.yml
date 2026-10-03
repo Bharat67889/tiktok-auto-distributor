@@ -1,12 +1,12 @@
-name: TikTok Auto Upload
+name: TikTok Auto Distributor
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: '0 */2 * * *' # Har 2 ghante me run karne ke liye
+  schedule:
+    - cron: '0 */6 * * *'
 
 jobs:
-  upload:
+  distribute:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -16,13 +16,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install Dependencies
-        run: |
-          npm install
-          npx playwright install chromium --with-deps
+        run: npm install
 
-      - name: Run TikTok Uploader
-        env:
-          TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
+      - name: Run TikTok API Distributor
         run: node tiktok_uploader.js
+        env:
+          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
