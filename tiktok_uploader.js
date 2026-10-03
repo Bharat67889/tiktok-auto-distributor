@@ -11,7 +11,7 @@ const CONFIG = {
 
 async function fetchVideoTarget() {
   if (!CONFIG.csvUrl) {
-    console.log('⚠️ SHEET_CSV_URL missing, using default test video.');
+    console.log('⚠️️ SHEET_CSV_URL missing, using default test video.');
     return {
       videoUrl: 'https://res.cloudinary.com/demo/video/upload/dog.mp4',
       caption: 'Effortlessly stunning. #trending #viral #fyp'
@@ -82,6 +82,14 @@ async function run() {
           path: '/',
           httpOnly: true,
           secure: true
+        },
+        {
+          name: 'sessionid_ss',
+          value: CONFIG.sessionid,
+          domain: '.tiktok.com',
+          path: '/',
+          httpOnly: true,
+          secure: true
         }
       ]);
     }
@@ -99,7 +107,7 @@ async function run() {
     console.log('📁 Locating file upload input element...');
     let fileInput = await page.$('input[type="file"]');
     
-    // Check inside iframe if not in main document
+    // Check inside iframe if not found in main document
     if (!fileInput) {
       for (const frame of page.frames()) {
         fileInput = await frame.$('input[type="file"]');
@@ -142,7 +150,7 @@ async function run() {
       await page.waitForTimeout(8000);
       await page.screenshot({ path: 'step4_final.png', fullPage: true });
     } else {
-      console.log('⚠️️ Post button selector missed.');
+      console.log('⚠ Post button selector missed.');
       await page.screenshot({ path: 'error_post_button.png', fullPage: true });
     }
 
