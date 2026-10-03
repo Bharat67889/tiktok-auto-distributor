@@ -5,13 +5,13 @@ const path = require('path');
 const { parse } = require('csv-parse/sync');
 
 const CONFIG = {
-  sessionid: process.env.TIKTOK_SESSION_ID,
+  cookiesJson: process.env.TIKTOK_COOKIES_JSON,
   csvUrl: process.env.SHEET_CSV_URL
 };
 
 async function fetchVideoTarget() {
   if (!CONFIG.csvUrl) {
-    console.log('⚠️️ SHEET_CSV_URL missing, using default test video.');
+    console.log('⚠️ SHEET_CSV_URL missing, using default test video.');
     return {
       videoUrl: 'https://res.cloudinary.com/demo/video/upload/dog.mp4',
       caption: 'Effortlessly stunning. #trending #viral #fyp'
@@ -72,26 +72,21 @@ async function run() {
     const { videoUrl, caption } = await fetchVideoTarget();
     await downloadVideo(videoUrl, tempVideo);
 
-    console.log('🍪 Injecting session cookies...');
-    if (CONFIG.sessionid) {
-      await context.addCookies([
-        {
-          name: 'sessionid',
-          value: CONFIG.sessionid,
-          domain: '.tiktok.com',
-          path: '/',
-          httpOnly: true,
-          secure: true
-        },
-        {
-          name: 'sessionid_ss',
-          value: CONFIG.sessionid,
-          domain: '.tiktok.com',
-          path: '/',
-          httpOnly: true,
-          secure: true
-        }
-      ]);
+    console.log('🍪 Injecting complete cookies array...');
+    if (CONFIG.cookiesJson) {
+      const rawCookies = JSON.parse(CONFIG.cookiesJson);
+      const formatted = rawCookies.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain.startsWith('.') ? c.domain : `.${c.domain}`,
+        path: c.path || '/',
+        secure: c.secure !== undefined ? c.secure : true,
+        httpOnly: c.httpOnly !== undefined ? c.httpOnly : false,
+        sameSite: c.sameSite || 'None'
+      }));
+      await context.addCookies(formatted);
+    } else {
+      console.log('⚠️ TIKTOK_COOKIES_JSON is empty!');
     }
 
     console.log('🌐 Opening TikTok Creator Upload Studio...');
@@ -100,14 +95,13 @@ async function run() {
       timeout: 60000
     });
 
-    console.log('📸 Capturing initial page snapshot...');
+    console.log('📸 Capturing studio snapshot...');
     await page.screenshot({ path: 'step1_loaded.png', fullPage: true });
 
     // Handle Upload File Input
     console.log('📁 Locating file upload input element...');
     let fileInput = await page.$('input[type="file"]');
     
-    // Check inside iframe if not found in main document
     if (!fileInput) {
       for (const frame of page.frames()) {
         fileInput = await frame.$('input[type="file"]');
@@ -150,7 +144,7 @@ async function run() {
       await page.waitForTimeout(8000);
       await page.screenshot({ path: 'step4_final.png', fullPage: true });
     } else {
-      console.log('⚠ Post button selector missed.');
+      console.log('⚠️ Post button selector missed.');
       await page.screenshot({ path: 'error_post_button.png', fullPage: true });
     }
 
